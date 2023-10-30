@@ -96,6 +96,16 @@ def Check_Z_AXiS(hdl):
 #############################################################################################
 
 def slope_detector(delta_volt, hdl, volt, TT_cur, counter) -> bool:
+    """
+    Function detects the position along the counts / voltage graph if we are above 1 / 2 height
+
+    :param delta_volt:
+    :param hdl:
+    :param volt:
+    :param TT_cur:
+    :param counter:
+    :return: False - if the current position is to the left from peak, True - otherwise
+    """
     voltage = volt + delta_volt
     mdtSetXYZAxisVoltage(hdl, voltage, voltage, voltage)
     time.sleep(0.001)
@@ -109,6 +119,19 @@ def slope_detector(delta_volt, hdl, volt, TT_cur, counter) -> bool:
 
 
 def slope_detector2(hdl, volt, TT_max, dots, step, counter, percent) -> bool:
+    """
+    Function detects the position along the counts / voltage graph if we are below 1 / 2 height
+
+    :param hdl: for the device load
+    :param volt: current voltage
+    :param TT_max: max voltage
+    :param dots: number of points to make the scan
+    :param step: the step to make points of voltage (we move mirrors in resonator with voltage change)
+    :param counter: the counter object from the outer scope
+    :param percent: the barrier of counts to see if we are scanning in the right position
+    :return: False - to the left of the peak, True - otherwise
+    """
+
     voltage_list = []
     new_voltage = volt
     for _ in range(dots):
@@ -211,8 +234,12 @@ def MDT693BExample(serialNumber, tagger, stabilisation_timer_pause=0, scan_flag=
         mod_width = 2
 
     # create new counter and making stabilisation
+    # be careful about the n_values of stab_counter. Set needed number of dots
+    N_stab = 10
+    step_stab = mod_width / 8
     new_counter = TimeTagger.Counter(tagger=tagger, channels=[1], binwidth=int(1e10), n_values=1)
-    stab_counter = TimeTagger.Counter(tagger=tagger, channels=[1], binwidth=int(1e10), n_values=N/100)
+    stab_counter = TimeTagger.Counter(tagger=tagger, channels=[1], binwidth=int(1e10), n_values=N_stab)
+
     volt = volt_max
     mdtSetXYZAxisVoltage(hdl, volt, volt, volt)
 
@@ -221,7 +248,7 @@ def MDT693BExample(serialNumber, tagger, stabilisation_timer_pause=0, scan_flag=
     counts_for_plot = {}
     time_stamp = 0.0
 
-    # Plot max_iteration points of new_counter
+    # Main loop to make stabilisation and get the plot of counts / time dependency
 
     while True and (volt > 0) and (volt < 100):
         # time to wait after each volt set
@@ -250,17 +277,23 @@ def MDT693BExample(serialNumber, tagger, stabilisation_timer_pause=0, scan_flag=
         relative_counts = counts_cur / counts_max
         if (relative_counts < 0.95) & (relative_counts >= 0.8):
             if not slope_detector(mod_width / 16, hdl, volt, counts_cur[0], new_counter):
+                volt -= (mod_width / 8)
+            else:
+                volt += (mod_width / 8)
+        elif (relative_counts < 0.8) & (relative_counts >= 0.5):
+            if not slope_detector(mod_width / 16, hdl, volt, counts_cur[0], new_counter):
                 volt -= (mod_width / 4)
             else:
                 volt += (mod_width / 4)
-        elif (relative_counts < 0.8) & (relative_counts >= 0.5):
-            if not slope_detector(mod_width / 16, hdl, volt, counts_cur[0], new_counter):
-                volt -= (mod_width / 2)
-            else:
-                volt += (mod_width / 2)
-        elif relative_counts < 0.5:
+        elif (relative_counts < 0.5) & (relative_counts >= 0.4):
             print("Count value is lower than half-height!")
-            if not slope_detector2(hdl, volt, volt_max, 100, 0.01, stab_counter, 95):
+            if not slope_detector2(hdl, volt, volt_max, N_stab, step_stab, stab_counter, 90):
+                volt -= mod_width / 2
+            else:
+                volt += mod_width / 2
+        elif relative_counts < 0.4:
+            print("Count value is lower than 0.4*height!")
+            if not slope_detector2(hdl, volt, volt_max, N_stab, step_stab, stab_counter, 90):
                 volt -= mod_width
             else:
                 volt += mod_width
